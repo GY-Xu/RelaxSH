@@ -39,7 +39,7 @@ RelaxSH 适合想在终端里读小说的人：它是一个支持 **Linux / macO
 
 要求：
 
-- Python 3.11+
+- Python 3.8+
 
 安装：
 

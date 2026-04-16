@@ -7,7 +7,7 @@ name = "relaxsh"
 version = "0.1.0"
 description = "A cross-platform terminal slacking companion focused on novel reading."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.8"
 license = { text = "MIT" }
 authors = [{ name = "xgy" }]
 keywords = ["terminal", "cli", "novel", "reader"]
@@ -19,6 +19,9 @@ classifiers = [
   "Operating System :: Microsoft :: Windows",
   "Operating System :: POSIX :: Linux",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Topic :: Games/Entertainment",
@@ -46,4 +49,3 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 relaxsh = ["data/*.txt"]
-

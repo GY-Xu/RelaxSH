@@ -39,7 +39,7 @@ RelaxSH is built for people who want a clean **terminal novel reader**, **CLI TX
 
 Requirements:
 
-- Python 3.11+
+- Python 3.8+
 
 Install:
 

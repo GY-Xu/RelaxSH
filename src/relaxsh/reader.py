@@ -10,7 +10,6 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime
-from importlib import resources
 from pathlib import Path
 from typing import Callable
 
@@ -184,7 +183,7 @@ def load_text(path: Path, encoding: str | None = None) -> str:
 def load_demo_text() -> str:
     """Load the bundled demo text."""
 
-    demo_path = resources.files("relaxsh").joinpath("data/demo.txt")
+    demo_path = Path(__file__).resolve().parent / "data" / "demo.txt"
     return demo_path.read_text(encoding="utf-8")
 
 
