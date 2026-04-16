@@ -21,6 +21,7 @@ from relaxsh.reader import BookmarkEntry, ReaderError, clear_screen, resolve_bos
 
 PROGRESS_COLUMN_WIDTH = 19
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
+SHELL_ESCAPED_PATH_RE = re.compile(r"\\([ (),])")
 LAUNCHER_LEFT_PADDING = "  "
 LAUNCHER_MASCOT_PIXELS = (
     "         ooo    ooo        ",
@@ -418,6 +419,12 @@ def _normalize_prompted_path(path_text: str) -> str:
     quote_pairs = {"'": "'", '"': '"'}
     if len(text) >= 2 and text[0] in quote_pairs and text[-1] == quote_pairs[text[0]]:
         return text[1:-1]
+
+    # Handle common shell-escaped path characters without breaking Windows path separators.
+    # Example: `demo\ novel\ \(test\).txt` -> `demo novel (test).txt`
+    decoded_shell_escapes = SHELL_ESCAPED_PATH_RE.sub(r"\1", text)
+    if decoded_shell_escapes != text:
+        return decoded_shell_escapes
 
     try:
         parsed = shlex.split(text, posix=(sys.platform != "win32"))

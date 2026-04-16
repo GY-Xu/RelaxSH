@@ -83,6 +83,16 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(normalized, "/Users/xgy/Downloads/demo novel.txt")
 
+    def test_normalize_prompted_path_handles_shell_escaped_windows_style_input(self) -> None:
+        raw = "C:\\Users\\xgy\\AppData\\Local\\Temp\\demo\\ novel\\ \\(test\\).txt"
+
+        normalized = _normalize_prompted_path(raw)
+
+        self.assertEqual(
+            normalized,
+            "C:\\Users\\xgy\\AppData\\Local\\Temp\\demo novel (test).txt",
+        )
+
     def test_launcher_imports_folder_from_interactive_menu(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.dict(os.environ, {"RELAXSH_HOME": str(Path(tmpdir) / "state")}):
