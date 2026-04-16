@@ -4,7 +4,7 @@
 
 Cross-platform terminal novel reader for TXT fiction.
 
-RelaxSH is built for people who want a clean **terminal novel reader**, **CLI TXT reader**, **command-line ebook reader**, and **cross-platform reading app** on **Linux**, **macOS**, and **Windows**.
+RelaxSH is built for the real-world scenario where you can only keep a terminal open at work, want to read fiction quietly, and need something low-profile. It is a **terminal novel reader**, **CLI TXT reader**, **command-line ebook reader**, and **cross-platform reading app** for **Linux**, **macOS**, and **Windows**.
 
 ## Why RelaxSH
 
