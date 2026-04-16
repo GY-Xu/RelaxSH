@@ -636,7 +636,11 @@ class CliTests(unittest.TestCase):
         self.assertEqual(command, (["/usr/bin/top"], "top"))
 
     def test_resolve_boss_command_prefers_taskmgr_on_windows(self) -> None:
-        with patch("relaxsh.reader.os.name", "nt"), patch(
+        with patch("relaxsh.reader.os.name", "nt"), patch.dict(
+            os.environ,
+            {},
+            clear=True,
+        ), patch(
             "relaxsh.reader.shutil.which",
             side_effect=lambda name: r"C:\\Windows\\System32\\taskmgr.exe" if name == "taskmgr.exe" else None,
         ):
