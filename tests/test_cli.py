@@ -35,6 +35,7 @@ from relaxsh.reader import (
     ReaderSession,
     decode_posix_escape_sequence,
     load_text,
+    render_screen,
     resolve_boss_command,
 )
 
@@ -623,6 +624,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("运维看板", rendered)
         self.assertIn("发布监控", rendered)
         self.assertIn("报表构建", rendered)
+        self.assertNotIn("阅读器", rendered)
 
     def test_resolve_boss_command_prefers_top_on_posix(self) -> None:
         with patch("relaxsh.reader.os.name", "posix"), patch(
@@ -641,6 +643,23 @@ class CliTests(unittest.TestCase):
             command = resolve_boss_command()
 
         self.assertEqual(command, ([r"C:\\Windows\\System32\\taskmgr.exe"], "taskmgr"))
+
+    def test_resolve_boss_command_uses_windows_system_root_when_path_lookup_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            windows_root = Path(tmpdir) / "Windows"
+            system32 = windows_root / "System32"
+            system32.mkdir(parents=True)
+            taskmgr = system32 / "Taskmgr.exe"
+            taskmgr.write_text("", encoding="utf-8")
+
+            with patch("relaxsh.reader.os.name", "nt"), patch.dict(
+                os.environ,
+                {"WINDIR": str(windows_root)},
+                clear=False,
+            ), patch("relaxsh.reader.shutil.which", return_value=None):
+                command = resolve_boss_command()
+
+        self.assertEqual(command, ([str(taskmgr)], "taskmgr"))
 
     def test_trigger_boss_key_runs_external_command_when_available(self) -> None:
         session = ReaderSession.from_text(
@@ -670,7 +689,27 @@ class CliTests(unittest.TestCase):
             launched, status = session.trigger_boss_key(DummyKeyReader([]))
 
         self.assertFalse(launched)
-        self.assertIn("伪装页", status)
+        self.assertEqual(status, "")
+
+    def test_render_screen_uses_ansi_redraw_when_supported(self) -> None:
+        stdout = io.StringIO()
+        with patch("relaxsh.reader._supports_ansi_screen_redraw", return_value=True), patch(
+            "relaxsh.reader.clear_screen"
+        ) as clear_mock, contextlib.redirect_stdout(stdout):
+            render_screen("frame")
+
+        self.assertEqual(stdout.getvalue(), "\x1b[H\x1b[Jframe")
+        clear_mock.assert_not_called()
+
+    def test_render_screen_falls_back_to_clear_screen_when_ansi_is_unavailable(self) -> None:
+        stdout = io.StringIO()
+        with patch("relaxsh.reader._supports_ansi_screen_redraw", return_value=False), patch(
+            "relaxsh.reader.clear_screen"
+        ) as clear_mock, contextlib.redirect_stdout(stdout):
+            render_screen("frame")
+
+        self.assertEqual(stdout.getvalue(), "frame")
+        clear_mock.assert_called_once_with()
 
     def test_reader_search_finds_next_match_and_wraps(self) -> None:
         session = ReaderSession.from_text(

@@ -23,6 +23,8 @@ MIN_WIDTH = 20
 MIN_LINES = 3
 ESCAPE_INITIAL_TIMEOUT = 0.60
 ESCAPE_CHUNK_TIMEOUT = 0.12
+ANSI_REDRAW_PREFIX = "\x1b[H\x1b[J"
+_WINDOWS_VT_REDRAW_ENABLED: bool | None = None
 CHAPTER_PATTERNS = (
     re.compile(r"^\s*第[\d零〇一二两三四五六七八九十百千万]+[章节卷回集部篇][^\n]{0,48}$"),
     re.compile(r"^\s*(chapter|chap\.)\s+[\divxlcdm]+[^\n]{0,48}$", re.IGNORECASE),
@@ -113,6 +115,66 @@ def clear_screen() -> None:
     """Clear the active terminal screen."""
 
     os.system("cls" if os.name == "nt" else "clear")
+
+
+def _enable_windows_virtual_terminal() -> bool:
+    """Enable ANSI escape handling on Windows consoles when available."""
+
+    global _WINDOWS_VT_REDRAW_ENABLED
+
+    if _WINDOWS_VT_REDRAW_ENABLED is not None:
+        return _WINDOWS_VT_REDRAW_ENABLED
+
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-11)
+        if handle in (0, -1):
+            _WINDOWS_VT_REDRAW_ENABLED = False
+            return False
+
+        mode = ctypes.c_uint()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            _WINDOWS_VT_REDRAW_ENABLED = False
+            return False
+
+        vt_mode = mode.value | 0x0004
+        if mode.value == vt_mode:
+            _WINDOWS_VT_REDRAW_ENABLED = True
+            return True
+
+        _WINDOWS_VT_REDRAW_ENABLED = bool(kernel32.SetConsoleMode(handle, vt_mode))
+        return _WINDOWS_VT_REDRAW_ENABLED
+    except Exception:
+        _WINDOWS_VT_REDRAW_ENABLED = False
+        return False
+
+
+def _supports_ansi_screen_redraw() -> bool:
+    """Return whether the current terminal supports cursor-home redraws."""
+
+    if not sys.stdout.isatty():
+        return False
+
+    if os.name == "nt":
+        return _enable_windows_virtual_terminal()
+
+    term = os.environ.get("TERM", "")
+    return term.lower() != "dumb"
+
+
+def render_screen(screen: str) -> None:
+    """Render one full-screen frame with minimal flicker when possible."""
+
+    if _supports_ansi_screen_redraw():
+        sys.stdout.write(ANSI_REDRAW_PREFIX)
+        sys.stdout.write(screen)
+        sys.stdout.flush()
+        return
+
+    clear_screen()
+    print(screen, end="", flush=True)
 
 
 def normalize_text(text: str) -> str:
@@ -276,9 +338,31 @@ def resolve_boss_command() -> tuple[list[str], str] | None:
     """Return the platform-native boss key command, if available."""
 
     if os.name == "nt":
-        taskmgr = shutil.which("taskmgr.exe")
-        if taskmgr:
-            return [taskmgr], "taskmgr"
+        candidate_paths = []
+        for root_name in ("WINDIR", "SystemRoot"):
+            root = os.environ.get(root_name)
+            if not root:
+                continue
+            candidate_paths.extend(
+                [
+                    os.path.join(root, "System32", "Taskmgr.exe"),
+                    os.path.join(root, "Sysnative", "Taskmgr.exe"),
+                    os.path.join(root, "SysWOW64", "Taskmgr.exe"),
+                ]
+            )
+
+        seen_paths = set()
+        for candidate in candidate_paths:
+            if candidate in seen_paths:
+                continue
+            seen_paths.add(candidate)
+            if os.path.isfile(candidate):
+                return [candidate], "taskmgr"
+
+        for executable in ("taskmgr.exe", "taskmgr"):
+            taskmgr = shutil.which(executable)
+            if taskmgr:
+                return [taskmgr], "taskmgr"
         return None
 
     top = shutil.which("top")
@@ -471,13 +555,13 @@ class ReaderSession:
 
         resolved = resolve_boss_command()
         if resolved is None:
-            return False, self._t("reader_boss_fallback_notice")
+            return False, ""
 
         command, label = resolved
         try:
             input_reader.run_external(command)
         except OSError:
-            return False, self._t("reader_boss_fallback_notice")
+            return False, ""
         return True, self._t("reader_boss_returned", app=label)
 
     def format_bookmark_browser(
@@ -771,11 +855,8 @@ class ReaderSession:
         max_browser_page = (len(self.chapters) - 1) // page_size
 
         while True:
-            clear_screen()
-            print(
-                self.format_chapter_browser(browser_page, current_chapter_index, status_message),
-                end="",
-                flush=True,
+            render_screen(
+                self.format_chapter_browser(browser_page, current_chapter_index, status_message)
             )
             status_message = ""
             command = input_reader.read_key()
@@ -840,11 +921,8 @@ class ReaderSession:
         max_browser_page = (len(ordered) - 1) // page_size
 
         while True:
-            clear_screen()
-            print(
-                self.format_bookmark_browser(ordered, browser_page, current_index, status_message),
-                end="",
-                flush=True,
+            render_screen(
+                self.format_bookmark_browser(ordered, browser_page, current_index, status_message)
             )
             status_message = ""
             command = input_reader.read_key()
@@ -922,13 +1000,12 @@ class ReaderSession:
         persist_current_view()
         with KeyReader() as input_reader:
             while True:
-                clear_screen()
                 screen = (
                     self.format_boss_screen(status_message)
                     if boss_mode
                     else self.format_page(top_line_index, status_message)
                 )
-                print(screen, end="", flush=True)
+                render_screen(screen)
                 status_message = ""
 
                 try:
@@ -939,11 +1016,8 @@ class ReaderSession:
                     return 0
 
                 if boss_mode:
-                    if command in {"b", "escape"}:
+                    if command in {"b", "escape", "q", "Q"}:
                         boss_mode = False
-                    elif command in {"q", "Q"}:
-                        persist_current_view()
-                        return 0
                     continue
 
                 if command == "d":
