@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from relaxsh.display import clip_text, wrap_text
+from relaxsh.display import clip_text, text_width, wrap_text
 from relaxsh.i18n import tr
 
 
@@ -385,6 +385,8 @@ class ReaderSession:
     chapters: list[Chapter]
     furthest_offset: int = 0
     ui_language: str = "zh"
+    requested_width: int | None = None
+    requested_lines_per_page: int | None = None
 
     @classmethod
     def from_text(
@@ -397,7 +399,18 @@ class ReaderSession:
         ui_language: str = "zh",
     ) -> "ReaderSession":
         resolved_width = resolve_content_width(width)
-        resolved_lines = resolve_lines_per_page(lines_per_page)
+        if lines_per_page is None:
+            key = "reader_footer_windows" if os.name == "nt" else "reader_footer_posix"
+            compact_key = f"{key}_compact"
+            footer = tr(ui_language, key)
+            footer_lines = wrap_text(footer, resolved_width) or [""]
+            if len(footer_lines) > 3:
+                footer = tr(ui_language, compact_key)
+                footer_lines = wrap_text(footer, resolved_width) or [""]
+            terminal_height = shutil.get_terminal_size(FALLBACK_TERMINAL_SIZE).lines
+            resolved_lines = max(MIN_LINES, terminal_height - (6 + len(footer_lines)))
+        else:
+            resolved_lines = resolve_lines_per_page(lines_per_page)
         normalized, wrapped_lines = build_display_lines(text, resolved_width)
         return cls(
             source_name=source_name,
@@ -410,6 +423,8 @@ class ReaderSession:
             chapters=detect_chapters(normalized),
             furthest_offset=min(max(furthest_offset, 0), len(normalized)),
             ui_language=ui_language,
+            requested_width=width,
+            requested_lines_per_page=lines_per_page,
         )
 
     def _t(self, key: str, **kwargs: object) -> str:
@@ -419,7 +434,59 @@ class ReaderSession:
         """Return the platform-specific reading footer."""
 
         key = "reader_footer_windows" if os.name == "nt" else "reader_footer_posix"
-        return self._t(key)
+        compact_key = f"{key}_compact"
+        footer = self._t(key)
+        footer_lines = wrap_text(footer, self.width) or [""]
+        if len(footer_lines) <= 3:
+            return footer
+        return self._t(compact_key)
+
+    def _reader_footer_lines(self, width: int | None = None) -> list[str]:
+        """Return footer lines that fit the current reading width."""
+
+        target_width = width or self.width
+        key = "reader_footer_windows" if os.name == "nt" else "reader_footer_posix"
+        compact_key = f"{key}_compact"
+        footer = self._t(key)
+        footer_lines = wrap_text(footer, target_width) or [""]
+        if len(footer_lines) <= 3:
+            return footer_lines
+        if text_width(footer) > target_width:
+            footer = self._t(compact_key)
+        return wrap_text(footer, target_width) or [""]
+
+    def _resolve_auto_lines_per_page(self, width: int) -> int:
+        """Resolve content height for auto-sized layouts."""
+
+        if self.requested_lines_per_page is not None:
+            return resolve_lines_per_page(self.requested_lines_per_page)
+
+        terminal_height = shutil.get_terminal_size(FALLBACK_TERMINAL_SIZE).lines
+        footer_lines = len(self._reader_footer_lines(width))
+        reserve_lines = 6 + footer_lines
+        return max(MIN_LINES, terminal_height - reserve_lines)
+
+    def refresh_layout_for_line_index(self, line_index: int) -> int:
+        """Reflow pagination after a terminal resize and preserve the current viewport."""
+
+        if self.requested_width is not None and self.requested_lines_per_page is not None:
+            return self.clamp_top_line_index(line_index)
+
+        anchor_offset = self.page_for_line_index(line_index).start_offset
+        resolved_width = resolve_content_width(self.requested_width)
+        resolved_lines = self._resolve_auto_lines_per_page(resolved_width)
+        if resolved_width == self.width and resolved_lines == self.lines_per_page:
+            return self.clamp_top_line_index(line_index)
+
+        normalized, wrapped_lines = build_display_lines(self.normalized_text, resolved_width)
+        self.normalized_text = normalized
+        self.total_chars = len(normalized)
+        self.width = resolved_width
+        self.lines_per_page = resolved_lines
+        self.display_lines = wrapped_lines
+        self.pages = paginate_lines(wrapped_lines, resolved_lines)
+        self.furthest_offset = min(max(self.furthest_offset, 0), self.total_chars)
+        return self.line_index_for_offset(anchor_offset)
 
     def max_top_line_index(self) -> int:
         """Return the greatest valid starting line for a viewport."""
@@ -519,12 +586,12 @@ class ReaderSession:
             if current_chapter is not None
             else _clip_text(self._t("reader_header_chapter_missing"), self.width)
         )
-        footer = _clip_text(self._reader_footer(), self.width)
+        footer_lines = self._reader_footer_lines()
         border = "=" * self.width
         body = "\n".join(page.lines)
         status = _clip_text(status_message, self.width) if status_message else ""
 
-        sections = [border, header, chapter_line, border, body, border, footer]
+        sections = [border, header, chapter_line, border, body, border, *footer_lines]
         if status:
             sections.append(status)
         return "\n".join(sections)
@@ -1000,6 +1067,7 @@ class ReaderSession:
         persist_current_view()
         with KeyReader() as input_reader:
             while True:
+                top_line_index = self.refresh_layout_for_line_index(top_line_index)
                 screen = (
                     self.format_boss_screen(status_message)
                     if boss_mode

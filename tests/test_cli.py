@@ -611,6 +611,59 @@ class CliTests(unittest.TestCase):
 
         self.assertIn("关任务管理器返回", footer)
 
+    def test_reader_page_wraps_footer_without_ellipsis_on_narrow_width(self) -> None:
+        session = ReaderSession.from_text(
+            text="第1章 初见\nalpha line 1\nalpha line 2\n",
+            source_name="narrow.txt",
+            width=36,
+            lines_per_page=4,
+            ui_language="zh",
+        )
+
+        rendered = session.format_page(0)
+        lines = rendered.splitlines()
+        footer_start = max(index for index, line in enumerate(lines) if set(line) == {"="}) + 1
+        footer_lines = lines[footer_start:]
+
+        self.assertTrue(any("[d]" in line or "[d/a]" in line for line in footer_lines))
+        self.assertTrue(any("[b]老板" in line for line in footer_lines))
+        self.assertTrue(all("..." not in line for line in footer_lines))
+        for line in footer_lines:
+            self.assertLessEqual(text_width(line), session.width)
+
+    def test_reader_auto_layout_refreshes_after_terminal_resize(self) -> None:
+        with patch(
+            "relaxsh.reader.shutil.get_terminal_size",
+            return_value=os.terminal_size((80, 18)),
+        ):
+            session = ReaderSession.from_text(
+                text="第1章 初见\n" + ("alpha beta gamma\n" * 20),
+                source_name="resize.txt",
+                width=None,
+                lines_per_page=None,
+                ui_language="zh",
+            )
+
+        initial_width = session.width
+        initial_lines = session.lines_per_page
+
+        with patch(
+            "relaxsh.reader.shutil.get_terminal_size",
+            return_value=os.terminal_size((44, 16)),
+        ):
+            top_line_index = session.refresh_layout_for_line_index(0)
+
+        rendered = session.format_page(top_line_index)
+        lines = rendered.splitlines()
+        footer_start = max(index for index, line in enumerate(lines) if set(line) == {"="}) + 1
+        footer_lines = lines[footer_start:]
+
+        self.assertEqual(top_line_index, 0)
+        self.assertLess(session.width, initial_width)
+        self.assertLess(session.lines_per_page, initial_lines)
+        self.assertTrue(any("[d]" in line or "[d/a]" in line for line in footer_lines))
+        self.assertTrue(all("..." not in line for line in footer_lines))
+
     def test_boss_screen_renders_disguise_mode_dashboard(self) -> None:
         session = ReaderSession.from_text(
             text="第1章 初见\nalpha line 1\n",
