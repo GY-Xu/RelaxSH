@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import random
+import os
+import re
 import shutil
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable
@@ -23,6 +26,44 @@ GOMOKU_HUMAN_STONE = "X"
 GOMOKU_AI_STONE = "O"
 GOMOKU_EMPTY = ""
 GOMOKU_DIRECTIONS = ((0, 1), (1, 0), (1, 1), (1, -1))
+GOMOKU_RENDER_STONES = {
+    GOMOKU_EMPTY: "·",
+    GOMOKU_HUMAN_STONE: "●",
+    GOMOKU_AI_STONE: "○",
+}
+GOMOKU_STAR_POINTS = {
+    (3, 3),
+    (3, 7),
+    (5, 5),
+    (7, 3),
+    (7, 7),
+}
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
+ANSI_RESET = "\x1b[0m"
+TILE_COLORS = {
+    0: (245, None, False),
+    2: (238, 230, False),
+    4: (238, 223, False),
+    8: (231, 209, True),
+    16: (231, 203, True),
+    32: (231, 197, True),
+    64: (231, 191, True),
+    128: (232, 227, True),
+    256: (232, 221, True),
+    512: (232, 220, True),
+    1024: (232, 214, True),
+    2048: (232, 208, True),
+}
+GOMOKU_BOARD_BG = 180
+GOMOKU_GRID_FG = 94
+GOMOKU_STAR_FG = 130
+GOMOKU_BLACK_STONE_FG = 16
+GOMOKU_WHITE_STONE_FG = 255
+GOMOKU_CURSOR_EMPTY_FG = 18
+GOMOKU_CURSOR_BLACK_FG = 16
+GOMOKU_CURSOR_WHITE_FG = 255
+GOMOKU_WIN_BG = 220
+GOMOKU_WIN_WHITE_FG = 52
 
 
 @dataclass
@@ -428,30 +469,124 @@ def _game_width() -> int:
     return max(32, min(88, terminal_width - 4))
 
 
+def _supports_ansi_colors() -> bool:
+    return sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
+
+
+def _strip_ansi(text: str) -> str:
+    return ANSI_ESCAPE_RE.sub("", text)
+
+
+def _visible_text_width(text: str) -> int:
+    return text_width(_strip_ansi(text))
+
+
+def _colorize(text: str, *, fg: int | None = None, bg: int | None = None, bold: bool = False) -> str:
+    if not _supports_ansi_colors():
+        return text
+
+    codes: list[str] = []
+    if bold:
+        codes.append("1")
+    if fg is not None:
+        codes.append(f"38;5;{fg}")
+    if bg is not None:
+        codes.append(f"48;5;{bg}")
+    if not codes:
+        return text
+    return f"\x1b[{';'.join(codes)}m{text}{ANSI_RESET}"
+
+
+def _pad_visible_text(text: str, width: int) -> str:
+    return text + (" " * max(0, width - _visible_text_width(text)))
+
+
+def _center_line(line: str, width: int) -> str:
+    visible_width = _visible_text_width(line)
+    if visible_width >= width:
+        return clip_text(_strip_ansi(line), width)
+    padding = max(0, (width - visible_width) // 2)
+    return (" " * padding) + line
+
+
+def _frame_block(lines: list[str], width: int, *, title: str = "") -> list[str]:
+    inner_width = max(12, width - 2)
+    top = "╭" + ("─" * inner_width) + "╮"
+    if title:
+        clipped_title = clip_text(f" {title} ", max(0, inner_width - 2))
+        title_width = text_width(clipped_title)
+        left_width = max(0, (inner_width - title_width) // 2)
+        right_width = max(0, inner_width - title_width - left_width)
+        top = f"╭{'─' * left_width}{clipped_title}{'─' * right_width}╮"
+
+    framed = [top]
+    for line in lines:
+        framed.append(f"│{_pad_visible_text(line, inner_width)}│")
+    framed.append("╰" + ("─" * inner_width) + "╯")
+    return framed
+
+
 def _board_cell_width(content_width: int) -> int:
-    available = max(BOARD_SIZE * BOARD_CELL_MIN_WIDTH + BOARD_SIZE + 1, min(content_width, 44))
+    available = max(BOARD_SIZE * (BOARD_CELL_MIN_WIDTH + 1) + BOARD_SIZE + 1, min(content_width, 48))
     return max(
-        BOARD_CELL_MIN_WIDTH,
-        min(BOARD_CELL_MAX_WIDTH, (available - (BOARD_SIZE + 1)) // BOARD_SIZE),
+        BOARD_CELL_MIN_WIDTH + 1,
+        min(BOARD_CELL_MAX_WIDTH + 1, (available - (BOARD_SIZE + 1)) // BOARD_SIZE),
     )
 
 
 def _board_lines(board: list[list[int]], width: int) -> list[str]:
     cell_width = _board_cell_width(width)
-    border = "+" + "+".join("-" * cell_width for _ in range(BOARD_SIZE)) + "+"
-    lines = [border]
-    for row in board:
-        cells = [("" if value == 0 else str(value)).center(cell_width) for value in row]
-        lines.append("|" + "|".join(cells) + "|")
-        lines.append(border)
-    return [clip_text(line, width) for line in lines]
+    top_border = "┌" + "┬".join("─" * cell_width for _ in range(BOARD_SIZE)) + "┐"
+    middle_border = "├" + "┼".join("─" * cell_width for _ in range(BOARD_SIZE)) + "┤"
+    bottom_border = "└" + "┴".join("─" * cell_width for _ in range(BOARD_SIZE)) + "┘"
+    lines = [top_border]
+    for row_index, row in enumerate(board):
+        cells = [_render_2048_cell(value, cell_width) for value in row]
+        lines.append("│" + "│".join(cells) + "│")
+        lines.append(bottom_border if row_index == BOARD_SIZE - 1 else middle_border)
+    return [_center_line(line, width) for line in lines]
+
+
+def _render_2048_cell(value: int, cell_width: int) -> str:
+    label = "·" if value == 0 else str(value)
+    content = label.center(cell_width)
+    fg, bg, bold = TILE_COLORS.get(
+        value,
+        (231, 202, True) if value else TILE_COLORS[0],
+    )
+    if value == 0:
+        return _colorize(content, fg=fg)
+    return _colorize(content, fg=fg, bg=bg, bold=bold)
+
+
+def _gomoku_winning_cells(board: list[list[str]]) -> set[tuple[int, int]]:
+    for row_index in range(GOMOKU_BOARD_SIZE):
+        for col_index in range(GOMOKU_BOARD_SIZE):
+            stone = board[row_index][col_index]
+            if not stone:
+                continue
+            for row_step, col_step in GOMOKU_DIRECTIONS:
+                prev_row = row_index - row_step
+                prev_col = col_index - col_step
+                if _gomoku_in_bounds(prev_row, prev_col) and board[prev_row][prev_col] == stone:
+                    continue
+                line_cells: list[tuple[int, int]] = []
+                next_row = row_index
+                next_col = col_index
+                while _gomoku_in_bounds(next_row, next_col) and board[next_row][next_col] == stone:
+                    line_cells.append((next_row, next_col))
+                    next_row += row_step
+                    next_col += col_step
+                if len(line_cells) >= GOMOKU_WIN_LENGTH:
+                    return set(line_cells)
+    return set()
 
 
 def _gomoku_axis_labels(*, compact: bool) -> str:
     labels = [chr(ord("A") + index) for index in range(GOMOKU_BOARD_SIZE)]
     if compact:
         return "   " + " ".join(labels)
-    return "    " + "".join(label.center(3) for label in labels)
+    return "   " + " ".join(labels)
 
 
 def _gomoku_cell_text(
@@ -461,18 +596,39 @@ def _gomoku_cell_text(
     *,
     cursor_row: int,
     cursor_col: int,
+    winning_cells: set[tuple[int, int]],
     compact: bool,
 ) -> str:
-    stone = board[row_index][col_index] or "."
+    position = (row_index, col_index)
+    raw_value = board[row_index][col_index]
+    stone = GOMOKU_RENDER_STONES[raw_value]
+    if raw_value == GOMOKU_EMPTY:
+        stone = "✦" if position in GOMOKU_STAR_POINTS else "┼"
+    elif position in winning_cells:
+        stone = "◆" if raw_value == GOMOKU_HUMAN_STONE else "◇"
     if row_index == cursor_row and col_index == cursor_col:
-        if compact:
-            if stone == ".":
-                return "*"
-            return stone.casefold()
-        return f"[{stone}]"
-    if compact:
-        return stone
-    return f" {stone} "
+        if raw_value == GOMOKU_EMPTY:
+            return _colorize("◎", fg=GOMOKU_CURSOR_EMPTY_FG, bg=GOMOKU_BOARD_BG, bold=True)
+        if raw_value == GOMOKU_HUMAN_STONE:
+            return _colorize("◆", fg=GOMOKU_CURSOR_BLACK_FG, bg=GOMOKU_BOARD_BG, bold=True)
+        return _colorize("◇", fg=GOMOKU_CURSOR_WHITE_FG, bg=GOMOKU_BOARD_BG, bold=True)
+    if raw_value == GOMOKU_HUMAN_STONE:
+        return _colorize(
+            stone,
+            fg=GOMOKU_BLACK_STONE_FG,
+            bg=GOMOKU_WIN_BG if position in winning_cells else GOMOKU_BOARD_BG,
+            bold=position in winning_cells,
+        )
+    if raw_value == GOMOKU_AI_STONE:
+        return _colorize(
+            stone,
+            fg=GOMOKU_WIN_WHITE_FG if position in winning_cells else GOMOKU_WHITE_STONE_FG,
+            bg=88 if position in winning_cells else GOMOKU_BOARD_BG,
+            bold=True,
+        )
+    if position in GOMOKU_STAR_POINTS:
+        return _colorize(stone, fg=GOMOKU_STAR_FG, bg=GOMOKU_BOARD_BG, bold=True)
+    return _colorize(stone, fg=GOMOKU_GRID_FG if compact else 243, bg=GOMOKU_BOARD_BG)
 
 
 def _gomoku_board_lines(
@@ -482,8 +638,9 @@ def _gomoku_board_lines(
     cursor_col: int,
     width: int,
 ) -> list[str]:
-    compact = width < 48
-    lines = [clip_text(_gomoku_axis_labels(compact=compact), width)]
+    compact = width < 40
+    winning_cells = _gomoku_winning_cells(board)
+    lines = [_gomoku_axis_labels(compact=compact)]
     for row_index in range(GOMOKU_BOARD_SIZE):
         cells = [
             _gomoku_cell_text(
@@ -492,14 +649,14 @@ def _gomoku_board_lines(
                 col_index,
                 cursor_row=cursor_row,
                 cursor_col=cursor_col,
+                winning_cells=winning_cells,
                 compact=compact,
             )
             for col_index in range(GOMOKU_BOARD_SIZE)
         ]
-        separator = " " if compact else ""
-        body = separator.join(cells)
-        lines.append(clip_text(f"{row_index + 1:>2} {body}", width))
-    return lines
+        body = " ".join(cells)
+        lines.append(f"{row_index + 1:>2} {body}")
+    return [_center_line(line, width) for line in lines]
 
 
 def _fit_lines(text: str, width: int) -> list[str]:
@@ -562,7 +719,6 @@ class Game2048Session:
 
     def _render(self, status_message: str = "") -> str:
         width = _game_width()
-        border = "=" * width
         title = clip_text(
             self._t(
                 "game_2048_header",
@@ -570,13 +726,17 @@ class Game2048Session:
                 best=self.snapshot.best_score,
                 tile=self.snapshot.max_tile,
             ),
-            width,
+            width - 4,
         )
-        subtitle = clip_text(self._t("game_2048_subtitle"), width)
-        controls = _fit_lines(self._t("game_2048_controls"), width)
-        sections = [border, title, subtitle, border, *_board_lines(self.snapshot.board, width), border, *controls]
+        subtitle = clip_text(self._t("game_2048_subtitle"), width - 4)
+        controls = _fit_lines(self._t("game_2048_controls"), width - 4)
+        sections = [
+            *_frame_block([title, subtitle], width, title=" 2048 "),
+            *_board_lines(self.snapshot.board, width),
+            *_frame_block(controls, width, title=" Controls "),
+        ]
         if status_message:
-            sections.append(clip_text(status_message, width))
+            sections.extend(_frame_block(_fit_lines(status_message, width - 4), width, title=" Status "))
         return "\n".join(sections)
 
     def _trigger_boss_key(self, input_reader: KeyReader) -> tuple[bool, str]:
@@ -727,35 +887,29 @@ class GameGomokuSession:
 
     def _render(self, status_message: str = "") -> str:
         width = _game_width()
-        border = "=" * width
         title = clip_text(
             self._t(
                 "game_gomoku_header",
                 status=self._status_label(),
                 moves=self.snapshot.move_count,
             ),
-            width,
+            width - 4,
         )
-        subtitle = clip_text(self._t("game_gomoku_subtitle"), width)
-        legend = clip_text(self._t("game_gomoku_legend"), width)
-        controls = _fit_lines(self._t("game_gomoku_controls"), width)
+        subtitle = clip_text(self._t("game_gomoku_subtitle"), width - 4)
+        legend = clip_text(self._t("game_gomoku_legend"), width - 4)
+        controls = _fit_lines(self._t("game_gomoku_controls"), width - 4)
         sections = [
-            border,
-            title,
-            subtitle,
-            legend,
-            border,
+            *_frame_block([title, subtitle, legend], width, title=" Gomoku "),
             *_gomoku_board_lines(
                 self.snapshot.board,
                 cursor_row=self.snapshot.cursor_row,
                 cursor_col=self.snapshot.cursor_col,
                 width=width,
             ),
-            border,
-            *controls,
+            *_frame_block(controls, width, title=" Controls "),
         ]
         if status_message:
-            sections.append(clip_text(status_message, width))
+            sections.extend(_frame_block(_fit_lines(status_message, width - 4), width, title=" Status "))
         return "\n".join(sections)
 
     def _trigger_boss_key(self, input_reader: KeyReader) -> tuple[bool, str]:

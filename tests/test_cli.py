@@ -149,10 +149,10 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 130)
         self.assertNotIn("Traceback", stderr.getvalue())
 
-    def test_launcher_renders_terminal_games_entry(self) -> None:
+    def test_launcher_renders_games_entry(self) -> None:
         lines = _compose_launcher_lines("zh", use_color=False)
 
-        self.assertTrue(any("终端小游戏" in line for line in lines))
+        self.assertTrue(any("小游戏" in line for line in lines))
 
     def test_games_launcher_displays_best_score_and_exit(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -169,10 +169,10 @@ class CliTests(unittest.TestCase):
                     exit_code = run_games_launcher(library)
 
         self.assertEqual(exit_code, 0)
-        self.assertIn("终端小游戏", stdout.getvalue())
+        self.assertIn("小游戏", stdout.getvalue())
         self.assertIn("2048 最高分: 32", stdout.getvalue())
-        self.assertIn("继续 2048", stdout.getvalue())
-        self.assertIn("五子棋（新开一局）", stdout.getvalue())
+        self.assertIn("1. 2048", stdout.getvalue())
+        self.assertIn("2. 五子棋", stdout.getvalue())
 
     def test_games_launcher_displays_gomoku_resume_hint(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -194,13 +194,13 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertIn("可继续五子棋: 已落 2 手", stdout.getvalue())
-        self.assertIn("继续五子棋", stdout.getvalue())
+        self.assertIn("2. 五子棋", stdout.getvalue())
 
     def test_games_launcher_opens_new_gomoku_game(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.dict(os.environ, {"RELAXSH_HOME": str(Path(tmpdir) / "state")}):
                 library = Library.load()
-                with patch("builtins.input", side_effect=["3", "0"]), patch(
+                with patch("builtins.input", side_effect=["2", "1", "0", "0"]), patch(
                     "relaxsh.cli.clear_screen"
                 ), patch("relaxsh.cli.open_gomoku_game", return_value=0) as open_mock, contextlib.redirect_stdout(
                     io.StringIO()
@@ -221,7 +221,7 @@ class CliTests(unittest.TestCase):
                     cursor_row=5,
                     cursor_col=6,
                 )
-                with patch("builtins.input", side_effect=["4", "0"]), patch(
+                with patch("builtins.input", side_effect=["2", "2", "0", "0"]), patch(
                     "relaxsh.cli.clear_screen"
                 ), patch("relaxsh.cli.open_gomoku_game", return_value=0) as open_mock, contextlib.redirect_stdout(
                     io.StringIO()
@@ -230,6 +230,21 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         open_mock.assert_called_once_with(library, fresh=False)
+
+    def test_games_launcher_enters_2048_mode_menu(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict(os.environ, {"RELAXSH_HOME": str(Path(tmpdir) / "state")}):
+                library = Library.load()
+                stdout = io.StringIO()
+                with patch("builtins.input", side_effect=["1", "0", "0"]), patch(
+                    "relaxsh.cli.clear_screen"
+                ), contextlib.redirect_stdout(stdout):
+                    exit_code = run_games_launcher(library)
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("RelaxSH / 小游戏 / 2048", stdout.getvalue())
+        self.assertIn("新开一局", stdout.getvalue())
+        self.assertIn("继续上次对局", stdout.getvalue())
 
     def test_gomoku_command_opens_game(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

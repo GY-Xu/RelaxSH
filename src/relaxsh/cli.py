@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
 from relaxsh.display import clip_text, pad_text, text_width
 from relaxsh.games import run_2048, run_gomoku
@@ -813,6 +813,49 @@ def open_gomoku_game(library: Library, *, fresh: bool = False) -> int:
     )
 
 
+def _run_game_mode_menu(
+    library: Library,
+    *,
+    game_name_key: str,
+    has_saved_game: bool,
+    no_saved_key: str,
+    open_game: Callable[..., int],
+) -> int:
+    while True:
+        language = library.settings.language
+        clear_screen()
+        print(tr(language, "games_mode_title", name=tr(language, game_name_key)))
+        print()
+        print(tr(language, "games_mode_new"))
+        print(tr(language, "games_mode_continue"))
+        print(_boss_key_menu_text(language))
+        print(tr(language, "games_mode_back"))
+        print()
+        choice = _prompt_choice(tr(language, "games_mode_prompt"))
+
+        if choice in {"0", ""}:
+            return 0
+
+        if choice.lower() == "b":
+            _run_boss_key_from_menu(language)
+            continue
+
+        if choice == "1":
+            open_game(library, fresh=True)
+            continue
+
+        if choice == "2":
+            if not has_saved_game:
+                print(tr(language, no_saved_key))
+                _pause(language)
+                continue
+            open_game(library, fresh=False)
+            continue
+
+        print(tr(language, "games_mode_invalid"))
+        _pause(language)
+
+
 def run_games_launcher(library: Library) -> int:
     while True:
         language = library.settings.language
@@ -847,10 +890,8 @@ def run_games_launcher(library: Library) -> int:
                 )
             )
         print()
-        print(tr(language, "games_menu_2048_new"))
-        print(tr(language, "games_menu_2048_continue"))
-        print(tr(language, "games_menu_gomoku_new"))
-        print(tr(language, "games_menu_gomoku_continue"))
+        print(tr(language, "games_menu_2048"))
+        print(tr(language, "games_menu_gomoku"))
         print(_boss_key_menu_text(language))
         print(tr(language, "games_menu_back"))
         print()
@@ -864,27 +905,23 @@ def run_games_launcher(library: Library) -> int:
             continue
 
         if choice == "1":
-            open_2048_game(library, fresh=True)
+            _run_game_mode_menu(
+                library,
+                game_name_key="games_name_2048",
+                has_saved_game=library.game_2048.has_saved_game,
+                no_saved_key="games_menu_no_saved_2048",
+                open_game=open_2048_game,
+            )
             continue
 
         if choice == "2":
-            if not library.game_2048.has_saved_game:
-                print(tr(language, "games_menu_no_saved_2048"))
-                _pause(language)
-                continue
-            open_2048_game(library, fresh=False)
-            continue
-
-        if choice == "3":
-            open_gomoku_game(library, fresh=True)
-            continue
-
-        if choice == "4":
-            if not library.game_gomoku.has_saved_game:
-                print(tr(language, "games_menu_no_saved_gomoku"))
-                _pause(language)
-                continue
-            open_gomoku_game(library, fresh=False)
+            _run_game_mode_menu(
+                library,
+                game_name_key="games_name_gomoku",
+                has_saved_game=library.game_gomoku.has_saved_game,
+                no_saved_key="games_menu_no_saved_gomoku",
+                open_game=open_gomoku_game,
+            )
             continue
 
         print(tr(language, "games_menu_invalid"))

@@ -94,6 +94,39 @@ class Game2048Tests(unittest.TestCase):
         self.assertEqual(snapshot.max_tile, 4)
         self.assertEqual(sum(1 for row in snapshot.board for cell in row if cell), 2)
 
+    def test_2048_render_uses_framed_layout(self) -> None:
+        snapshot = Game2048Snapshot(
+            board=[
+                [2, 0, 0, 0],
+                [0, 4, 0, 0],
+                [0, 0, 8, 0],
+                [0, 0, 0, 16],
+            ],
+            score=30,
+            best_score=30,
+        )
+
+        rendered = Game2048Session(snapshot, rng=random.Random(0))._render()
+
+        self.assertIn("╭", rendered)
+        self.assertIn("┌", rendered)
+        self.assertIn("·", rendered)
+
+    def test_2048_render_uses_colors_when_supported(self) -> None:
+        snapshot = Game2048Snapshot(
+            board=[
+                [2, 4, 8, 16],
+                [0, 0, 0, 0],
+                [0, 0, 0, 0],
+                [0, 0, 0, 0],
+            ]
+        )
+
+        with patch("relaxsh.games._supports_ansi_colors", return_value=True):
+            rendered = Game2048Session(snapshot, rng=random.Random(0))._render()
+
+        self.assertIn("\x1b[", rendered)
+
 
 class GomokuTests(unittest.TestCase):
     def test_new_gomoku_game_starts_empty_with_center_cursor(self) -> None:
@@ -139,6 +172,53 @@ class GomokuTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(snapshot.board[5][6], "X")
         self.assertTrue(any(cell == "O" for row in snapshot.board for cell in row))
+
+    def test_gomoku_render_uses_stone_symbols(self) -> None:
+        snapshot = start_gomoku_game()
+        snapshot.board[5][5] = "X"
+        snapshot.board[5][6] = "O"
+        snapshot.cursor_row = 5
+        snapshot.cursor_col = 7
+
+        rendered = GameGomokuSession(snapshot, rng=random.Random(0))._render()
+
+        self.assertIn("●", rendered)
+        self.assertIn("○", rendered)
+        self.assertIn("◎", rendered)
+
+    def test_gomoku_render_shows_star_points_and_winning_highlight(self) -> None:
+        snapshot = start_gomoku_game()
+        for col_index in range(2, 7):
+            snapshot.board[5][col_index] = "X"
+        snapshot.cursor_row = 0
+        snapshot.cursor_col = 0
+
+        rendered = GameGomokuSession(snapshot, rng=random.Random(0))._render()
+
+        self.assertIn("✦", rendered)
+        self.assertIn("◆", rendered)
+
+    def test_gomoku_render_uses_black_stone_color(self) -> None:
+        snapshot = start_gomoku_game()
+        snapshot.board[5][5] = "X"
+        snapshot.cursor_row = 0
+        snapshot.cursor_col = 0
+
+        with patch("relaxsh.games._supports_ansi_colors", return_value=True):
+            rendered = GameGomokuSession(snapshot, rng=random.Random(0))._render()
+
+        self.assertIn("\x1b[38;5;16;48;5;180m●\x1b[0m", rendered)
+
+    def test_gomoku_cursor_black_stone_uses_board_background(self) -> None:
+        snapshot = start_gomoku_game()
+        snapshot.board[5][5] = "X"
+        snapshot.cursor_row = 5
+        snapshot.cursor_col = 5
+
+        with patch("relaxsh.games._supports_ansi_colors", return_value=True):
+            rendered = GameGomokuSession(snapshot, rng=random.Random(0))._render()
+
+        self.assertIn("\x1b[1;38;5;16;48;5;180m◆\x1b[0m", rendered)
 
 
 if __name__ == "__main__":

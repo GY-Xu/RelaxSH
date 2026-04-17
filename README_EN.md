@@ -86,7 +86,7 @@ Current main menu:
 ```text
 1. Novel Reader
 2. Settings
-3. Terminal Games
+3. Games
 b. Boss key
 0. Exit
 ```
@@ -98,10 +98,10 @@ Inside the novel reader, you can:
 - continue the last book
 - trigger the boss key from menus or during reading
 
-Inside terminal games, you can:
+Inside games, you can:
 
-- start or resume 2048
-- start or resume Gomoku
+- choose 2048 or Gomoku first
+- then start a new run or continue the saved run
 - trigger the boss key during play
 
 ## Boss Key
