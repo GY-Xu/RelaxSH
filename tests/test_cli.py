@@ -641,12 +641,15 @@ class CliTests(unittest.TestCase):
             {},
             clear=True,
         ), patch(
+            "relaxsh.reader.os.path.isfile",
+            return_value=False,
+        ), patch(
             "relaxsh.reader.shutil.which",
-            side_effect=lambda name: r"C:\\Windows\\System32\\taskmgr.exe" if name == "taskmgr.exe" else None,
+            side_effect=lambda name: r"C:\Windows\System32\taskmgr.exe" if name == "taskmgr.exe" else None,
         ):
             command = resolve_boss_command()
 
-        self.assertEqual(command, ([r"C:\\Windows\\System32\\taskmgr.exe"], "taskmgr"))
+        self.assertEqual(command, ([r"C:\Windows\System32\taskmgr.exe"], "taskmgr"))
 
     def test_resolve_boss_command_uses_windows_system_root_when_path_lookup_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
