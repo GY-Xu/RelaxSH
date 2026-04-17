@@ -122,6 +122,80 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(language, "en")
         self.assertEqual(reloaded.settings.language, "en")
 
+    def test_2048_state_is_persisted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict(os.environ, {"RELAXSH_HOME": str(Path(tmpdir) / "state")}):
+                library = Library.load()
+                library.save_2048_state(
+                    [[2, 2, 0, 0], [4, 8, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
+                    128,
+                    won=True,
+                )
+                reloaded = Library.load()
+
+        self.assertEqual(reloaded.game_2048.score, 128)
+        self.assertEqual(reloaded.game_2048.best_score, 128)
+        self.assertEqual(reloaded.game_2048.board[0][:2], [2, 2])
+        self.assertTrue(reloaded.game_2048.won)
+        self.assertTrue(reloaded.game_2048.has_saved_game)
+
+    def test_clear_2048_state_keeps_best_score(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict(os.environ, {"RELAXSH_HOME": str(Path(tmpdir) / "state")}):
+                library = Library.load()
+                library.save_2048_state(
+                    [[2, 4, 0, 0], [0, 8, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
+                    256,
+                )
+                cleared = library.clear_2048_state()
+                reloaded = Library.load()
+
+        self.assertEqual(cleared.best_score, 256)
+        self.assertEqual(reloaded.game_2048.best_score, 256)
+        self.assertEqual(reloaded.game_2048.board, [])
+        self.assertFalse(reloaded.game_2048.has_saved_game)
+
+    def test_gomoku_state_is_persisted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict(os.environ, {"RELAXSH_HOME": str(Path(tmpdir) / "state")}):
+                library = Library.load()
+                board = [["" for _ in range(11)] for _ in range(11)]
+                board[5][5] = "X"
+                board[5][6] = "O"
+                library.save_gomoku_state(
+                    board,
+                    cursor_row=5,
+                    cursor_col=7,
+                    winner="",
+                    game_over=False,
+                )
+                reloaded = Library.load()
+
+        self.assertEqual(reloaded.game_gomoku.cursor_row, 5)
+        self.assertEqual(reloaded.game_gomoku.cursor_col, 7)
+        self.assertEqual(reloaded.game_gomoku.board[5][5], "X")
+        self.assertEqual(reloaded.game_gomoku.board[5][6], "O")
+        self.assertTrue(reloaded.game_gomoku.has_saved_game)
+
+    def test_clear_gomoku_state_removes_saved_board(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict(os.environ, {"RELAXSH_HOME": str(Path(tmpdir) / "state")}):
+                library = Library.load()
+                board = [["" for _ in range(11)] for _ in range(11)]
+                board[5][5] = "X"
+                library.save_gomoku_state(
+                    board,
+                    cursor_row=5,
+                    cursor_col=5,
+                )
+                cleared = library.clear_gomoku_state()
+                reloaded = Library.load()
+
+        self.assertEqual(cleared.board, [])
+        self.assertEqual(reloaded.game_gomoku.board, [])
+        self.assertFalse(reloaded.game_gomoku.has_saved_game)
+
+
 
 if __name__ == "__main__":
     unittest.main()

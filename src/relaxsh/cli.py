@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Sequence
 
 from relaxsh.display import clip_text, pad_text, text_width
+from relaxsh.games import run_2048, run_gomoku
 from relaxsh import __version__
 from relaxsh.i18n import tr
 from relaxsh.library import BookRecord, ImportSummary, Library, format_timestamp
@@ -170,6 +171,19 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Lines shown per page. Defaults to the current terminal height.",
+    )
+
+    game_2048_parser = subparsers.add_parser("2048", help="Play the built-in 2048 terminal game.")
+    game_2048_parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help="Start a new 2048 run instead of resuming the saved board.",
+    )
+    gomoku_parser = subparsers.add_parser("gomoku", help="Play the built-in Gomoku terminal game.")
+    gomoku_parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help="Start a new Gomoku run instead of resuming the saved board.",
     )
 
     subparsers.add_parser("version", help="Show the current RelaxSH version.")
@@ -389,6 +403,7 @@ def _launcher_menu_lines(language: str) -> list[str]:
         "",
         tr(language, "main_menu_novels"),
         tr(language, "main_menu_settings"),
+        tr(language, "main_menu_games"),
         _boss_key_menu_text(language),
         tr(language, "main_menu_exit"),
     ]
@@ -742,6 +757,140 @@ def run_settings(library: Library) -> int:
         _pause(language)
 
 
+def open_2048_game(library: Library, *, fresh: bool = False) -> int:
+    game_state = library.game_2048
+    initial_board = None if fresh or not game_state.has_saved_game else game_state.board
+    initial_score = 0 if initial_board is None else game_state.score
+    initial_won = False if initial_board is None else game_state.won
+    initial_over = False if initial_board is None else game_state.game_over
+
+    def persist_game_state(snapshot: object) -> None:
+        board = getattr(snapshot, "board")
+        score = getattr(snapshot, "score")
+        won = getattr(snapshot, "won")
+        game_over = getattr(snapshot, "game_over")
+        library.save_2048_state(board, score, won=won, game_over=game_over)
+
+    return run_2048(
+        ui_language=library.settings.language,
+        initial_board=initial_board,
+        initial_score=initial_score,
+        best_score=game_state.best_score,
+        won=initial_won,
+        game_over=initial_over,
+        state_callback=persist_game_state,
+    )
+
+
+def open_gomoku_game(library: Library, *, fresh: bool = False) -> int:
+    game_state = library.game_gomoku
+    initial_board = None if fresh or not game_state.has_saved_game else game_state.board
+    initial_winner = "" if initial_board is None else game_state.winner
+    initial_over = False if initial_board is None else game_state.game_over
+
+    def persist_game_state(snapshot: object) -> None:
+        board = getattr(snapshot, "board")
+        cursor_row = getattr(snapshot, "cursor_row")
+        cursor_col = getattr(snapshot, "cursor_col")
+        winner = getattr(snapshot, "winner")
+        game_over = getattr(snapshot, "game_over")
+        library.save_gomoku_state(
+            board,
+            cursor_row=cursor_row,
+            cursor_col=cursor_col,
+            winner=winner,
+            game_over=game_over,
+        )
+
+    return run_gomoku(
+        ui_language=library.settings.language,
+        initial_board=initial_board,
+        cursor_row=game_state.cursor_row,
+        cursor_col=game_state.cursor_col,
+        winner=initial_winner,
+        game_over=initial_over,
+        state_callback=persist_game_state,
+    )
+
+
+def run_games_launcher(library: Library) -> int:
+    while True:
+        language = library.settings.language
+        clear_screen()
+        print(tr(language, "games_title"))
+        print()
+        print(tr(language, "games_2048_best", score=library.game_2048.best_score))
+        if library.game_2048.has_saved_game:
+            print(
+                tr(
+                    language,
+                    "games_2048_saved",
+                    score=library.game_2048.score,
+                    tile=library.game_2048.max_tile,
+                )
+            )
+        elif library.game_2048.score > 0:
+            print(
+                tr(
+                    language,
+                    "games_2048_last",
+                    score=library.game_2048.score,
+                    tile=library.game_2048.max_tile,
+                )
+            )
+        if library.game_gomoku.has_saved_game:
+            print(
+                tr(
+                    language,
+                    "games_gomoku_saved",
+                    moves=library.game_gomoku.move_count,
+                )
+            )
+        print()
+        print(tr(language, "games_menu_2048_new"))
+        print(tr(language, "games_menu_2048_continue"))
+        print(tr(language, "games_menu_gomoku_new"))
+        print(tr(language, "games_menu_gomoku_continue"))
+        print(_boss_key_menu_text(language))
+        print(tr(language, "games_menu_back"))
+        print()
+        choice = _prompt_choice(tr(language, "games_menu_prompt"))
+
+        if choice in {"0", ""}:
+            return 0
+
+        if choice.lower() == "b":
+            _run_boss_key_from_menu(language)
+            continue
+
+        if choice == "1":
+            open_2048_game(library, fresh=True)
+            continue
+
+        if choice == "2":
+            if not library.game_2048.has_saved_game:
+                print(tr(language, "games_menu_no_saved_2048"))
+                _pause(language)
+                continue
+            open_2048_game(library, fresh=False)
+            continue
+
+        if choice == "3":
+            open_gomoku_game(library, fresh=True)
+            continue
+
+        if choice == "4":
+            if not library.game_gomoku.has_saved_game:
+                print(tr(language, "games_menu_no_saved_gomoku"))
+                _pause(language)
+                continue
+            open_gomoku_game(library, fresh=False)
+            continue
+
+        print(tr(language, "games_menu_invalid"))
+        _pause(language)
+
+
 def run_novel_launcher(library: Library) -> int:
     while True:
         language = library.settings.language
@@ -797,6 +946,10 @@ def run_launcher(library: Library) -> int:
 
         if choice == "2":
             run_settings(library)
+            continue
+
+        if choice == "3":
+            run_games_launcher(library)
             continue
 
         if choice.lower() == "b":
@@ -923,9 +1076,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 lines_per_page=args.lines,
             )
 
+        if args.command == "2048":
+            return open_2048_game(library, fresh=args.fresh)
+
+        if args.command == "gomoku":
+            return open_gomoku_game(library, fresh=args.fresh)
+
         if args.command == "version":
             print(f"relaxsh {__version__}")
             return 0
+    except KeyboardInterrupt:
+        print()
+        return 130
     except ReaderError as exc:
         print(f"{tr(library.settings.language, 'error_prefix')}: {exc}", file=sys.stderr)
         return 1

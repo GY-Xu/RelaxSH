@@ -23,6 +23,7 @@ from relaxsh.cli import (
     _strip_ansi,
     filter_books,
     main,
+    run_games_launcher,
     run_library_browser,
     run_novel_launcher,
     run_settings,
@@ -132,6 +133,112 @@ class CliTests(unittest.TestCase):
         self.assertEqual(library.settings.language, "en")
         self.assertIn("Settings", stdout.getvalue())
         self.assertIn("Language switched to English.", stdout.getvalue())
+
+    def test_launcher_ctrl_c_exits_without_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict(os.environ, {"RELAXSH_HOME": str(Path(tmpdir) / "state")}):
+                stdout = io.StringIO()
+                stderr = io.StringIO()
+                with patch("builtins.input", side_effect=KeyboardInterrupt), patch(
+                    "relaxsh.cli._is_interactive_terminal", return_value=True
+                ), patch("relaxsh.cli.clear_screen"), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(
+                    stderr
+                ):
+                    exit_code = main([])
+
+        self.assertEqual(exit_code, 130)
+        self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_launcher_renders_terminal_games_entry(self) -> None:
+        lines = _compose_launcher_lines("zh", use_color=False)
+
+        self.assertTrue(any("终端小游戏" in line for line in lines))
+
+    def test_games_launcher_displays_best_score_and_exit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict(os.environ, {"RELAXSH_HOME": str(Path(tmpdir) / "state")}):
+                library = Library.load()
+                library.save_2048_state(
+                    [[2, 4, 0, 0], [0, 8, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
+                    32,
+                )
+                stdout = io.StringIO()
+                with patch("builtins.input", side_effect=["0"]), patch(
+                    "relaxsh.cli.clear_screen"
+                ), contextlib.redirect_stdout(stdout):
+                    exit_code = run_games_launcher(library)
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("终端小游戏", stdout.getvalue())
+        self.assertIn("2048 最高分: 32", stdout.getvalue())
+        self.assertIn("继续 2048", stdout.getvalue())
+        self.assertIn("五子棋（新开一局）", stdout.getvalue())
+
+    def test_games_launcher_displays_gomoku_resume_hint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict(os.environ, {"RELAXSH_HOME": str(Path(tmpdir) / "state")}):
+                library = Library.load()
+                board = [["" for _ in range(11)] for _ in range(11)]
+                board[5][5] = "X"
+                board[5][6] = "O"
+                library.save_gomoku_state(
+                    board,
+                    cursor_row=5,
+                    cursor_col=7,
+                )
+                stdout = io.StringIO()
+                with patch("builtins.input", side_effect=["0"]), patch(
+                    "relaxsh.cli.clear_screen"
+                ), contextlib.redirect_stdout(stdout):
+                    exit_code = run_games_launcher(library)
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("可继续五子棋: 已落 2 手", stdout.getvalue())
+        self.assertIn("继续五子棋", stdout.getvalue())
+
+    def test_games_launcher_opens_new_gomoku_game(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict(os.environ, {"RELAXSH_HOME": str(Path(tmpdir) / "state")}):
+                library = Library.load()
+                with patch("builtins.input", side_effect=["3", "0"]), patch(
+                    "relaxsh.cli.clear_screen"
+                ), patch("relaxsh.cli.open_gomoku_game", return_value=0) as open_mock, contextlib.redirect_stdout(
+                    io.StringIO()
+                ):
+                    exit_code = run_games_launcher(library)
+
+        self.assertEqual(exit_code, 0)
+        open_mock.assert_called_once_with(library, fresh=True)
+
+    def test_games_launcher_can_resume_gomoku_game(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict(os.environ, {"RELAXSH_HOME": str(Path(tmpdir) / "state")}):
+                library = Library.load()
+                board = [["" for _ in range(11)] for _ in range(11)]
+                board[5][5] = "X"
+                library.save_gomoku_state(
+                    board,
+                    cursor_row=5,
+                    cursor_col=6,
+                )
+                with patch("builtins.input", side_effect=["4", "0"]), patch(
+                    "relaxsh.cli.clear_screen"
+                ), patch("relaxsh.cli.open_gomoku_game", return_value=0) as open_mock, contextlib.redirect_stdout(
+                    io.StringIO()
+                ):
+                    exit_code = run_games_launcher(library)
+
+        self.assertEqual(exit_code, 0)
+        open_mock.assert_called_once_with(library, fresh=False)
+
+    def test_gomoku_command_opens_game(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict(os.environ, {"RELAXSH_HOME": str(Path(tmpdir) / "state")}):
+                with patch("relaxsh.cli.open_gomoku_game", return_value=0) as open_mock:
+                    exit_code = main(["gomoku", "--fresh"])
+
+        self.assertEqual(exit_code, 0)
+        open_mock.assert_called_once()
 
     def test_launcher_boss_label_shows_posix_return_hint(self) -> None:
         with patch("relaxsh.cli.os.name", "posix"):

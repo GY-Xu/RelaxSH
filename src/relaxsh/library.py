@@ -17,6 +17,8 @@ from relaxsh.reader import ReaderError, load_text_with_encoding, normalize_text
 
 SUPPORTED_SUFFIXES = {".txt"}
 STATE_FILENAME = "library.json"
+GAME_2048_BOARD_SIZE = 4
+GAME_GOMOKU_BOARD_SIZE = 11
 
 
 def utc_now_iso() -> str:
@@ -108,6 +110,122 @@ class AppSettings:
     """Global app settings stored alongside the library."""
 
     language: str = "zh"
+
+
+def _normalize_2048_board(board: object) -> list[list[int]]:
+    """Normalize a persisted 2048 board into a safe 4x4 integer grid."""
+
+    if not isinstance(board, list) or len(board) != GAME_2048_BOARD_SIZE:
+        return []
+
+    normalized: list[list[int]] = []
+    for row in board:
+        if not isinstance(row, list) or len(row) != GAME_2048_BOARD_SIZE:
+            return []
+        normalized_row: list[int] = []
+        for value in row:
+            try:
+                normalized_row.append(max(0, int(value)))
+            except (TypeError, ValueError):
+                return []
+        normalized.append(normalized_row)
+    return normalized
+
+
+def _normalize_gomoku_board(board: object) -> list[list[str]]:
+    """Normalize a persisted Gomoku board into a safe 11x11 grid."""
+
+    if not isinstance(board, list) or len(board) != GAME_GOMOKU_BOARD_SIZE:
+        return []
+
+    normalized: list[list[str]] = []
+    for row in board:
+        if not isinstance(row, list) or len(row) != GAME_GOMOKU_BOARD_SIZE:
+            return []
+        normalized_row: list[str] = []
+        for value in row:
+            token = str(value)
+            normalized_row.append(token if token in {"", "X", "O"} else "")
+        normalized.append(normalized_row)
+    return normalized
+
+
+@dataclass
+class Game2048Record:
+    """Persisted state for the built-in 2048 game."""
+
+    best_score: int = 0
+    score: int = 0
+    board: list[list[int]] = field(default_factory=list)
+    won: bool = False
+    game_over: bool = False
+    updated_at: str | None = None
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, object]) -> "Game2048Record":
+        board = _normalize_2048_board(payload.get("board"))
+        return cls(
+            best_score=max(0, int(payload.get("best_score", 0))),
+            score=max(0, int(payload.get("score", 0))),
+            board=board,
+            won=bool(payload.get("won", False)),
+            game_over=bool(payload.get("game_over", False)),
+            updated_at=payload.get("updated_at"),
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+    @property
+    def has_saved_game(self) -> bool:
+        return bool(self.board) and not self.game_over
+
+    @property
+    def max_tile(self) -> int:
+        if not self.board:
+            return 0
+        return max((max(row) for row in self.board), default=0)
+
+
+@dataclass
+class GameGomokuRecord:
+    """Persisted state for the built-in Gomoku game."""
+
+    board: list[list[str]] = field(default_factory=list)
+    cursor_row: int = GAME_GOMOKU_BOARD_SIZE // 2
+    cursor_col: int = GAME_GOMOKU_BOARD_SIZE // 2
+    winner: str = ""
+    game_over: bool = False
+    updated_at: str | None = None
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, object]) -> "GameGomokuRecord":
+        board = _normalize_gomoku_board(payload.get("board"))
+        cursor_row = max(0, min(GAME_GOMOKU_BOARD_SIZE - 1, int(payload.get("cursor_row", GAME_GOMOKU_BOARD_SIZE // 2))))
+        cursor_col = max(0, min(GAME_GOMOKU_BOARD_SIZE - 1, int(payload.get("cursor_col", GAME_GOMOKU_BOARD_SIZE // 2))))
+        winner = str(payload.get("winner", ""))
+        winner = winner if winner in {"", "human", "ai", "draw"} else ""
+        return cls(
+            board=board,
+            cursor_row=cursor_row,
+            cursor_col=cursor_col,
+            winner=winner,
+            game_over=bool(payload.get("game_over", False)),
+            updated_at=payload.get("updated_at"),
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+    @property
+    def has_saved_game(self) -> bool:
+        return bool(self.board) and any(any(cell for cell in row) for row in self.board) and not self.game_over
+
+    @property
+    def move_count(self) -> int:
+        if not self.board:
+            return 0
+        return sum(1 for row in self.board for cell in row if cell)
 
 
 @dataclass
@@ -218,9 +336,13 @@ class Library:
         self,
         books: list[BookRecord] | None = None,
         settings: AppSettings | None = None,
+        game_2048: Game2048Record | None = None,
+        game_gomoku: GameGomokuRecord | None = None,
     ) -> None:
         self.books: list[BookRecord] = books or []
         self.settings = settings or AppSettings()
+        self.game_2048 = game_2048 or Game2048Record()
+        self.game_gomoku = game_gomoku or GameGomokuRecord()
 
     @classmethod
     def load(cls) -> "Library":
@@ -231,17 +353,24 @@ class Library:
         payload = json.loads(state_path.read_text(encoding="utf-8"))
         books = [BookRecord.from_dict(book) for book in payload.get("books", [])]
         settings_payload = payload.get("settings", {})
+        games_payload = payload.get("games", {})
         settings = AppSettings(
             language=normalize_language(settings_payload.get("language")),
         )
-        return cls(books, settings=settings)
+        game_2048 = Game2048Record.from_dict(games_payload.get("2048", {}))
+        game_gomoku = GameGomokuRecord.from_dict(games_payload.get("gomoku", {}))
+        return cls(books, settings=settings, game_2048=game_2048, game_gomoku=game_gomoku)
 
     def save(self) -> None:
         ensure_app_home()
         payload = {
-            "schema_version": 1,
+            "schema_version": 3,
             "settings": asdict(self.settings),
             "books": [book.to_dict() for book in self.books],
+            "games": {
+                "2048": self.game_2048.to_dict(),
+                "gomoku": self.game_gomoku.to_dict(),
+            },
         }
         get_state_path().write_text(
             json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
@@ -484,3 +613,62 @@ class Library:
         self.settings.language = normalized
         self.save()
         return normalized
+
+    def save_2048_state(
+        self,
+        board: list[list[int]],
+        score: int,
+        *,
+        won: bool = False,
+        game_over: bool = False,
+    ) -> Game2048Record:
+        """Persist the current 2048 board and score."""
+
+        normalized_board = _normalize_2048_board(board)
+        self.game_2048.board = normalized_board
+        self.game_2048.score = max(0, int(score))
+        self.game_2048.best_score = max(self.game_2048.best_score, self.game_2048.score)
+        self.game_2048.won = bool(won)
+        self.game_2048.game_over = bool(game_over)
+        self.game_2048.updated_at = utc_now_iso()
+        self.save()
+        return self.game_2048
+
+    def clear_2048_state(self) -> Game2048Record:
+        """Clear the resumable 2048 board while keeping the best score."""
+
+        self.game_2048 = Game2048Record(
+            best_score=self.game_2048.best_score,
+            updated_at=utc_now_iso(),
+        )
+        self.save()
+        return self.game_2048
+
+    def save_gomoku_state(
+        self,
+        board: list[list[str]],
+        *,
+        cursor_row: int,
+        cursor_col: int,
+        winner: str = "",
+        game_over: bool = False,
+    ) -> GameGomokuRecord:
+        """Persist the current Gomoku board and cursor state."""
+
+        normalized_board = _normalize_gomoku_board(board)
+        self.game_gomoku.board = normalized_board
+        self.game_gomoku.cursor_row = max(0, min(GAME_GOMOKU_BOARD_SIZE - 1, int(cursor_row)))
+        self.game_gomoku.cursor_col = max(0, min(GAME_GOMOKU_BOARD_SIZE - 1, int(cursor_col)))
+        normalized_winner = str(winner)
+        self.game_gomoku.winner = normalized_winner if normalized_winner in {"", "human", "ai", "draw"} else ""
+        self.game_gomoku.game_over = bool(game_over)
+        self.game_gomoku.updated_at = utc_now_iso()
+        self.save()
+        return self.game_gomoku
+
+    def clear_gomoku_state(self) -> GameGomokuRecord:
+        """Clear the resumable Gomoku board."""
+
+        self.game_gomoku = GameGomokuRecord(updated_at=utc_now_iso())
+        self.save()
+        return self.game_gomoku
