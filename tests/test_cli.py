@@ -173,6 +173,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("2048 最高分: 32", stdout.getvalue())
         self.assertIn("1. 2048", stdout.getvalue())
         self.assertIn("2. 五子棋", stdout.getvalue())
+        self.assertIn("3. 贪吃蛇", stdout.getvalue())
 
     def test_games_launcher_displays_gomoku_resume_hint(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -245,6 +246,44 @@ class CliTests(unittest.TestCase):
         self.assertIn("RelaxSH / 小游戏 / 2048", stdout.getvalue())
         self.assertIn("新开一局", stdout.getvalue())
         self.assertIn("继续上次对局", stdout.getvalue())
+
+    def test_games_launcher_enters_snake_mode_menu(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict(os.environ, {"RELAXSH_HOME": str(Path(tmpdir) / "state")}):
+                library = Library.load()
+                stdout = io.StringIO()
+                with patch("builtins.input", side_effect=["3", "0", "0"]), patch(
+                    "relaxsh.cli.clear_screen"
+                ), contextlib.redirect_stdout(stdout):
+                    exit_code = run_games_launcher(library)
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("RelaxSH / 小游戏 / 贪吃蛇", stdout.getvalue())
+        self.assertIn("新开一局", stdout.getvalue())
+        self.assertIn("继续上次对局", stdout.getvalue())
+
+    def test_games_launcher_opens_new_snake_game(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict(os.environ, {"RELAXSH_HOME": str(Path(tmpdir) / "state")}):
+                library = Library.load()
+                with patch("builtins.input", side_effect=["3", "1", "0", "0"]), patch(
+                    "relaxsh.cli.clear_screen"
+                ), patch("relaxsh.cli.open_snake_game", return_value=0) as open_mock, contextlib.redirect_stdout(
+                    io.StringIO()
+                ):
+                    exit_code = run_games_launcher(library)
+
+        self.assertEqual(exit_code, 0)
+        open_mock.assert_called_once_with(library, fresh=True)
+
+    def test_snake_command_opens_game(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict(os.environ, {"RELAXSH_HOME": str(Path(tmpdir) / "state")}):
+                with patch("relaxsh.cli.open_snake_game", return_value=0) as open_mock:
+                    exit_code = main(["snake", "--fresh"])
+
+        self.assertEqual(exit_code, 0)
+        open_mock.assert_called_once()
 
     def test_gomoku_command_opens_game(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

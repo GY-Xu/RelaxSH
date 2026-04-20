@@ -8,6 +8,7 @@ import select
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -1272,10 +1273,10 @@ class KeyReader:
             self._original_settings,
         )
 
-    def read_key(self) -> str:
+    def read_key(self, timeout: float | None = None) -> str | None:
         if self._is_windows:
-            return self._read_windows_key()
-        return self._read_posix_key()
+            return self._read_windows_key(timeout=timeout)
+        return self._read_posix_key(timeout=timeout)
 
     def prompt_line(self, prompt: str) -> str:
         """Temporarily switch back to line input for prompts."""
@@ -1312,7 +1313,13 @@ class KeyReader:
         finally:
             self._tty.setcbreak(self._fd)
 
-    def _read_windows_key(self) -> str:
+    def _read_windows_key(self, timeout: float | None = None) -> str | None:
+        if timeout is not None:
+            deadline = time.monotonic() + max(0.0, timeout)
+            while not self._module.kbhit():
+                if time.monotonic() >= deadline:
+                    return None
+                time.sleep(0.01)
         char = self._module.getwch()
         if char == "\x03":
             raise KeyboardInterrupt
@@ -1332,7 +1339,9 @@ class KeyReader:
             return "escape"
         return char
 
-    def _read_posix_key(self) -> str:
+    def _read_posix_key(self, timeout: float | None = None) -> str | None:
+        if timeout is not None and not self._input_ready(timeout=max(0.0, timeout)):
+            return None
         char = sys.stdin.read(1)
         if char == "\x03":
             raise KeyboardInterrupt

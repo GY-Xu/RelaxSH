@@ -19,6 +19,8 @@ SUPPORTED_SUFFIXES = {".txt"}
 STATE_FILENAME = "library.json"
 GAME_2048_BOARD_SIZE = 4
 GAME_GOMOKU_BOARD_SIZE = 11
+GAME_SNAKE_ROWS = 12
+GAME_SNAKE_COLS = 18
 
 
 def utc_now_iso() -> str:
@@ -150,6 +152,56 @@ def _normalize_gomoku_board(board: object) -> list[list[str]]:
     return normalized
 
 
+def _normalize_snake_body(body: object) -> list[list[int]]:
+    """Normalize a persisted Snake body into unique in-bounds coordinates."""
+
+    if not isinstance(body, list):
+        return []
+
+    normalized: list[list[int]] = []
+    seen: set[tuple[int, int]] = set()
+    for segment in body:
+        if not isinstance(segment, (list, tuple)) or len(segment) != 2:
+            return []
+        try:
+            row_index = int(segment[0])
+            col_index = int(segment[1])
+        except (TypeError, ValueError):
+            return []
+        if not (0 <= row_index < GAME_SNAKE_ROWS and 0 <= col_index < GAME_SNAKE_COLS):
+            return []
+        key = (row_index, col_index)
+        if key in seen:
+            return []
+        seen.add(key)
+        normalized.append([row_index, col_index])
+    return normalized
+
+
+def _normalize_snake_points(points: object) -> list[list[int]]:
+    if not isinstance(points, list):
+        return []
+
+    normalized: list[list[int]] = []
+    seen: set[tuple[int, int]] = set()
+    for entry in points:
+        if not isinstance(entry, (list, tuple)) or len(entry) != 2:
+            return []
+        try:
+            row_index = int(entry[0])
+            col_index = int(entry[1])
+        except (TypeError, ValueError):
+            return []
+        if not (0 <= row_index < GAME_SNAKE_ROWS and 0 <= col_index < GAME_SNAKE_COLS):
+            return []
+        key = (row_index, col_index)
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append([row_index, col_index])
+    return normalized
+
+
 @dataclass
 class Game2048Record:
     """Persisted state for the built-in 2048 game."""
@@ -226,6 +278,67 @@ class GameGomokuRecord:
         if not self.board:
             return 0
         return sum(1 for row in self.board for cell in row if cell)
+
+
+@dataclass
+class GameSnakeRecord:
+    """Persisted state for the built-in Snake game."""
+
+    best_score: int = 0
+    score: int = 0
+    snake: list[list[int]] = field(default_factory=list)
+    rocks: list[list[int]] = field(default_factory=list)
+    food_row: int = 0
+    food_col: int = 0
+    direction: str = "right"
+    speed: str = "normal"
+    difficulty: str = "normal"
+    game_over: bool = False
+    updated_at: str | None = None
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, object]) -> "GameSnakeRecord":
+        snake = _normalize_snake_body(payload.get("snake"))
+        rocks = _normalize_snake_points(payload.get("rocks"))
+        food_row = int(payload.get("food_row", 0))
+        food_col = int(payload.get("food_col", 0))
+        if not (0 <= food_row < GAME_SNAKE_ROWS):
+            food_row = 0
+        if not (0 <= food_col < GAME_SNAKE_COLS):
+            food_col = 0
+        direction = str(payload.get("direction", "right"))
+        if direction not in {"up", "down", "left", "right"}:
+            direction = "right"
+        speed = str(payload.get("speed", "normal"))
+        if speed not in {"slow", "normal", "fast"}:
+            speed = "normal"
+        difficulty = str(payload.get("difficulty", "normal"))
+        if difficulty not in {"easy", "normal", "hard"}:
+            difficulty = "normal"
+        return cls(
+            best_score=max(0, int(payload.get("best_score", 0))),
+            score=max(0, int(payload.get("score", 0))),
+            snake=snake,
+            rocks=rocks,
+            food_row=food_row,
+            food_col=food_col,
+            direction=direction,
+            speed=speed,
+            difficulty=difficulty,
+            game_over=bool(payload.get("game_over", False)),
+            updated_at=payload.get("updated_at"),
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+    @property
+    def has_saved_game(self) -> bool:
+        return bool(self.snake) and not self.game_over
+
+    @property
+    def length(self) -> int:
+        return len(self.snake)
 
 
 @dataclass
@@ -338,11 +451,13 @@ class Library:
         settings: AppSettings | None = None,
         game_2048: Game2048Record | None = None,
         game_gomoku: GameGomokuRecord | None = None,
+        game_snake: GameSnakeRecord | None = None,
     ) -> None:
         self.books: list[BookRecord] = books or []
         self.settings = settings or AppSettings()
         self.game_2048 = game_2048 or Game2048Record()
         self.game_gomoku = game_gomoku or GameGomokuRecord()
+        self.game_snake = game_snake or GameSnakeRecord()
 
     @classmethod
     def load(cls) -> "Library":
@@ -359,17 +474,25 @@ class Library:
         )
         game_2048 = Game2048Record.from_dict(games_payload.get("2048", {}))
         game_gomoku = GameGomokuRecord.from_dict(games_payload.get("gomoku", {}))
-        return cls(books, settings=settings, game_2048=game_2048, game_gomoku=game_gomoku)
+        game_snake = GameSnakeRecord.from_dict(games_payload.get("snake", {}))
+        return cls(
+            books,
+            settings=settings,
+            game_2048=game_2048,
+            game_gomoku=game_gomoku,
+            game_snake=game_snake,
+        )
 
     def save(self) -> None:
         ensure_app_home()
         payload = {
-            "schema_version": 3,
+            "schema_version": 5,
             "settings": asdict(self.settings),
             "books": [book.to_dict() for book in self.books],
             "games": {
                 "2048": self.game_2048.to_dict(),
                 "gomoku": self.game_gomoku.to_dict(),
+                "snake": self.game_snake.to_dict(),
             },
         }
         get_state_path().write_text(
@@ -672,3 +795,51 @@ class Library:
         self.game_gomoku = GameGomokuRecord(updated_at=utc_now_iso())
         self.save()
         return self.game_gomoku
+
+    def save_snake_state(
+        self,
+        snake: list[tuple[int, int]] | list[list[int]],
+        rocks: list[tuple[int, int]] | list[list[int]],
+        score: int,
+        *,
+        food_row: int,
+        food_col: int,
+        direction: str,
+        speed: str,
+        difficulty: str,
+        game_over: bool = False,
+    ) -> GameSnakeRecord:
+        """Persist the current Snake body, direction, and score."""
+
+        normalized_snake = _normalize_snake_body(snake)
+        normalized_rocks = _normalize_snake_points(rocks)
+        self.game_snake.snake = normalized_snake
+        self.game_snake.rocks = normalized_rocks
+        self.game_snake.score = max(0, int(score))
+        self.game_snake.best_score = max(self.game_snake.best_score, self.game_snake.score)
+        self.game_snake.food_row = max(0, min(GAME_SNAKE_ROWS - 1, int(food_row)))
+        self.game_snake.food_col = max(0, min(GAME_SNAKE_COLS - 1, int(food_col)))
+        normalized_direction = str(direction)
+        self.game_snake.direction = normalized_direction if normalized_direction in {"up", "down", "left", "right"} else "right"
+        normalized_speed = str(speed)
+        self.game_snake.speed = normalized_speed if normalized_speed in {"slow", "normal", "fast"} else "normal"
+        normalized_difficulty = str(difficulty)
+        self.game_snake.difficulty = (
+            normalized_difficulty if normalized_difficulty in {"easy", "normal", "hard"} else "normal"
+        )
+        self.game_snake.game_over = bool(game_over)
+        self.game_snake.updated_at = utc_now_iso()
+        self.save()
+        return self.game_snake
+
+    def clear_snake_state(self) -> GameSnakeRecord:
+        """Clear the resumable Snake board while keeping the best score."""
+
+        self.game_snake = GameSnakeRecord(
+            best_score=self.game_snake.best_score,
+            speed=self.game_snake.speed,
+            difficulty=self.game_snake.difficulty,
+            updated_at=utc_now_iso(),
+        )
+        self.save()
+        return self.game_snake

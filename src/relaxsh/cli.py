@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 from relaxsh.display import clip_text, pad_text, text_width
-from relaxsh.games import run_2048, run_gomoku
+from relaxsh.games import run_2048, run_gomoku, run_snake
 from relaxsh import __version__
 from relaxsh.i18n import tr
 from relaxsh.library import BookRecord, ImportSummary, Library, format_timestamp
@@ -184,6 +184,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--fresh",
         action="store_true",
         help="Start a new Gomoku run instead of resuming the saved board.",
+    )
+    snake_parser = subparsers.add_parser("snake", help="Play the built-in Snake terminal game.")
+    snake_parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help="Start a new Snake run instead of resuming the saved board.",
     )
 
     subparsers.add_parser("version", help="Show the current RelaxSH version.")
@@ -813,6 +819,55 @@ def open_gomoku_game(library: Library, *, fresh: bool = False) -> int:
     )
 
 
+def open_snake_game(library: Library, *, fresh: bool = False) -> int:
+    game_state = library.game_snake
+    initial_snake = None if fresh or not game_state.has_saved_game else [
+        (segment[0], segment[1]) for segment in game_state.snake
+    ]
+    initial_rocks = [] if initial_snake is None else [
+        (rock[0], rock[1]) for rock in game_state.rocks
+    ]
+    initial_score = 0 if initial_snake is None else game_state.score
+    initial_over = False if initial_snake is None else game_state.game_over
+
+    def persist_game_state(snapshot: object) -> None:
+        snake = getattr(snapshot, "snake")
+        rocks = getattr(snapshot, "rocks")
+        score = getattr(snapshot, "score")
+        food_row = getattr(snapshot, "food_row")
+        food_col = getattr(snapshot, "food_col")
+        direction = getattr(snapshot, "direction")
+        speed = getattr(snapshot, "speed")
+        difficulty = getattr(snapshot, "difficulty")
+        game_over = getattr(snapshot, "game_over")
+        library.save_snake_state(
+            snake,
+            rocks,
+            score,
+            food_row=food_row,
+            food_col=food_col,
+            direction=direction,
+            speed=speed,
+            difficulty=difficulty,
+            game_over=game_over,
+        )
+
+    return run_snake(
+        ui_language=library.settings.language,
+        initial_snake=initial_snake,
+        initial_rocks=initial_rocks,
+        food_row=game_state.food_row,
+        food_col=game_state.food_col,
+        direction=game_state.direction,
+        speed=game_state.speed,
+        difficulty=game_state.difficulty,
+        initial_score=initial_score,
+        best_score=game_state.best_score,
+        game_over=initial_over,
+        state_callback=persist_game_state,
+    )
+
+
 def _run_game_mode_menu(
     library: Library,
     *,
@@ -889,9 +944,29 @@ def run_games_launcher(library: Library) -> int:
                     moves=library.game_gomoku.move_count,
                 )
             )
+        print(tr(language, "games_snake_best", score=library.game_snake.best_score))
+        if library.game_snake.has_saved_game:
+            print(
+                tr(
+                    language,
+                    "games_snake_saved",
+                    score=library.game_snake.score,
+                    length=library.game_snake.length,
+                )
+            )
+        elif library.game_snake.score > 0:
+            print(
+                tr(
+                    language,
+                    "games_snake_last",
+                    score=library.game_snake.score,
+                    length=library.game_snake.length,
+                )
+            )
         print()
         print(tr(language, "games_menu_2048"))
         print(tr(language, "games_menu_gomoku"))
+        print(tr(language, "games_menu_snake"))
         print(_boss_key_menu_text(language))
         print(tr(language, "games_menu_back"))
         print()
@@ -921,6 +996,16 @@ def run_games_launcher(library: Library) -> int:
                 has_saved_game=library.game_gomoku.has_saved_game,
                 no_saved_key="games_menu_no_saved_gomoku",
                 open_game=open_gomoku_game,
+            )
+            continue
+
+        if choice == "3":
+            _run_game_mode_menu(
+                library,
+                game_name_key="games_name_snake",
+                has_saved_game=library.game_snake.has_saved_game,
+                no_saved_key="games_menu_no_saved_snake",
+                open_game=open_snake_game,
             )
             continue
 
@@ -1118,6 +1203,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.command == "gomoku":
             return open_gomoku_game(library, fresh=args.fresh)
+
+        if args.command == "snake":
+            return open_snake_game(library, fresh=args.fresh)
 
         if args.command == "version":
             print(f"relaxsh {__version__}")

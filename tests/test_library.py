@@ -195,6 +195,57 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(reloaded.game_gomoku.board, [])
         self.assertFalse(reloaded.game_gomoku.has_saved_game)
 
+    def test_snake_state_is_persisted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict(os.environ, {"RELAXSH_HOME": str(Path(tmpdir) / "state")}):
+                library = Library.load()
+                library.save_snake_state(
+                    [(5, 5), (5, 4), (5, 3)],
+                    [(1, 1), (1, 2)],
+                    9,
+                    food_row=2,
+                    food_col=7,
+                    direction="right",
+                    speed="fast",
+                    difficulty="hard",
+                    game_over=False,
+                )
+                reloaded = Library.load()
+
+        self.assertEqual(reloaded.game_snake.score, 9)
+        self.assertEqual(reloaded.game_snake.best_score, 9)
+        self.assertEqual(reloaded.game_snake.rocks, [[1, 1], [1, 2]])
+        self.assertEqual(reloaded.game_snake.food_row, 2)
+        self.assertEqual(reloaded.game_snake.food_col, 7)
+        self.assertEqual(reloaded.game_snake.direction, "right")
+        self.assertEqual(reloaded.game_snake.speed, "fast")
+        self.assertEqual(reloaded.game_snake.difficulty, "hard")
+        self.assertTrue(reloaded.game_snake.has_saved_game)
+
+    def test_clear_snake_state_keeps_best_score(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict(os.environ, {"RELAXSH_HOME": str(Path(tmpdir) / "state")}):
+                library = Library.load()
+                library.save_snake_state(
+                    [(5, 5), (5, 4), (5, 3)],
+                    [(1, 1)],
+                    12,
+                    food_row=1,
+                    food_col=1,
+                    direction="up",
+                    speed="slow",
+                    difficulty="easy",
+                )
+                cleared = library.clear_snake_state()
+                reloaded = Library.load()
+
+        self.assertEqual(cleared.best_score, 12)
+        self.assertEqual(reloaded.game_snake.best_score, 12)
+        self.assertEqual(reloaded.game_snake.speed, "slow")
+        self.assertEqual(reloaded.game_snake.difficulty, "easy")
+        self.assertEqual(reloaded.game_snake.snake, [])
+        self.assertFalse(reloaded.game_snake.has_saved_game)
+
 
 
 if __name__ == "__main__":
